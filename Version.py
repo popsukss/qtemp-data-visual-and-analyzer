@@ -57,6 +57,37 @@ import streamlit as st
 import seaborn as sns
 import matplotlib.pyplot as plt
 
+# --- added: dataframe scientific formatting helper ---
+def style_dataframe_sci(df: pd.DataFrame,
+                        small_thresh: float = 1e-3,
+                        large_thresh: float = 1e6,
+                        sig_figs: int = 3) -> "pd.io.formats.style.Styler":
+    """
+    Return a pandas Styler that formats numeric cells in scientific notation
+    when abs(value) < small_thresh or abs(value) >= large_thresh.
+    Non-numeric values are left unchanged.
+    """
+    def _fmt(x):
+        try:
+            if pd.isnull(x):
+                return ""
+            if isinstance(x, (int, np.integer)):
+                v = int(x)
+                if v != 0 and (abs(v) < small_thresh or abs(v) >= large_thresh):
+                    return f"{v:.{sig_figs}e}"
+                return str(v)
+            if isinstance(x, (float, np.floating)):
+                v = float(x)
+                if v != 0 and (abs(v) < small_thresh or abs(v) >= large_thresh):
+                    return f"{v:.{sig_figs}e}"
+                # default fixed format for regular-sized floats
+                return f"{v:.6f}"
+        except Exception:
+            pass
+        return x
+    return df.style.format(_fmt)
+# --- end added helper ---
+
 # --- added: plot editor helpers ---
 def _init_edit_flag(key: str) -> None:
     flag = f"edit_{key}"
@@ -114,16 +145,24 @@ def render_scatter_with_editor(df: pd.DataFrame, x_col: str, y_col: str, plot_ke
     """
     Render a Seaborn scatter with an Edit plot button. overlay_line optionally contains
     {'x': np.ndarray, 'y': np.ndarray, 'label': str, 'color': str}.
+    Robust to non-positive y values when log y-scale is requested.
     """
     opts = plot_options_ui(plot_key, default_title, x_col, y_col, default_figsize=(6.0,4.0), default_alpha=1, default_yscale=default_yscale)
+
+    # If user requested log scale but there are non-positive y values, filter them out.
+    plot_df = df.copy()
+    if opts["yscale"] == "log":
+        pos_mask = plot_df[y_col] > 0
+        if not pos_mask.any():
+            st.warning("No positive y values available for log scale plotting — showing linear plot instead.")
+            opts["yscale"] = "linear"
+        else:
+            plot_df = plot_df.loc[pos_mask].copy()
+
     fig, ax = plt.subplots(figsize=opts["figsize"])
-    # seaborn scatter: use 's' argument for marker size
-    sns.lineplot(data=df, x=x_col, y=y_col, alpha=opts["alpha"], 
-                    linewidth=opts["linewidth"],
-                     ax=ax, 
-                    #   edgecolor="k", 
-                    #   linewidth=0.2
-                    )
+    # seaborn lineplot for continuity + scatter-like view (alpha controls visibility)
+    sns.lineplot(data=plot_df, x=x_col, y=y_col, alpha=opts["alpha"],
+                 linewidth=opts["linewidth"], ax=ax)
     ax.set_title(opts["title"])
     ax.set_xlabel(opts["xlabel"])
     ax.set_ylabel(opts["ylabel"])
@@ -132,8 +171,9 @@ def render_scatter_with_editor(df: pd.DataFrame, x_col: str, y_col: str, plot_ke
     if opts["yscale"] == "log":
         ax.set_yscale("log")
     if overlay_line is not None:
+        # Overlay line may contain values outside filtered set; plot anyway but avoid invalid log plotting issues
         ax.plot(overlay_line["x"], overlay_line["y"], color=overlay_line.get("color", "red"),
-            linewidth=1, label=overlay_line.get("label", "fit"), linestyle="--")
+                linewidth=1, label=overlay_line.get("label", "fit"), linestyle="--")
         ax.legend()
     st.pyplot(fig)
     plt.close(fig)
@@ -180,16 +220,21 @@ def perform_linear_regression(x: np.ndarray, y: np.ndarray) -> Tuple[float, floa
 def compute_subthreshold_swing(x: np.ndarray, y: np.ndarray) -> float:
     """
     Compute the subthreshold swing (SS) in mV/decade from gate voltage (VGS)
-    and drain current (ID) samples.  Assumes x and y are already filtered to
-    the desired subthreshold region .
+    and drain current (ID) samples.  Handles non-positive and very small currents
+    by replacing them with an adaptive small epsilon before taking log10.
     """
-    # Filter out non‑positive currents to avoid log10 issues
-    mask = y > 0
-    if mask.sum() < 2:
+    if x.size == 0 or y.size == 0:
         return float("nan")
-    x_valid = x[mask]
-    log_id = np.log10(y[mask])
-    X = x_valid.reshape(-1, 1)
+    # Determine adaptive epsilon from smallest positive current (if present)
+    pos = y[y > 0]
+    eps = float(pos.min() / 10.0) if pos.size > 0 else 1e-30
+    # Avoid eps being zero or subnormal zero
+    if not np.isfinite(eps) or eps <= 0:
+        eps = 1e-30
+    # Replace non-positive values with eps for log computation
+    y_safe = np.where(y > 0, y, eps)
+    log_id = np.log10(y_safe)
+    X = x.reshape(-1, 1)
     slope, _, _, _ = perform_linear_regression(X, log_id)
     if slope == 0:
         return float("nan")
@@ -262,6 +307,7 @@ def create_results_table() -> pd.DataFrame:
         "fit_max",
         "slope",
         "intercept",
+        "x_intercept",
         "r2",
         "rmse",
         "n_points",
@@ -279,7 +325,7 @@ def main() -> None:
     if "current_file" not in st.session_state:
         st.session_state.current_file = None
 
-    st.title("🔄 Dual Sweep FET Analyzer")
+    st.title("🔄 Dual Sweep FET Analyzer (Version4)")
 
     # --- File Manager Section ---
     st.markdown("### 📁 File Manager")
@@ -355,7 +401,7 @@ def main() -> None:
         selected_df = fwd_df if sweep_option == "Forward" else rev_df
         
         with st.expander("Data Preview (interactive table)", expanded=True):
-            st.dataframe(selected_df, use_container_width=True)
+            st.dataframe(style_dataframe_sci(selected_df), use_container_width=True)
 
         num_cols = numeric_columns(selected_df)
         # require gateV and drainI to compute metrics; but allow other x/y for scatter
@@ -410,7 +456,12 @@ def main() -> None:
             if param_option == "Subthreshold swing (SS)":
                 # Prepare data and show log10(ID) vs VGS using Seaborn
                 plot_df_plot = plot_df.copy()
-                plot_df_plot["log_id"] = np.log10(plot_df_plot[y_col].clip(lower=1e-30))
+                # compute adaptive epsilon from positive values to avoid arbitrary fixed clip
+                pos_values = plot_df_plot[y_col][plot_df_plot[y_col] > 0]
+                eps = float(pos_values.min() / 10.0) if pos_values.size > 0 else 1e-30
+                if not np.isfinite(eps) or eps <= 0:
+                    eps = 1e-30
+                plot_df_plot["log_id"] = np.log10(plot_df_plot[y_col].clip(lower=eps))
                 # slider for gate voltage range
                 x_min_all = float(plot_df[x_col].min())
                 x_max_all = float(plot_df[x_col].max())
@@ -431,14 +482,28 @@ def main() -> None:
                 # plot scatter of log10(ID) and overlay linear fit in log-space if possible
                 default_title = "log10(ID) vs VGS for SS extraction"
                 overlay = None
+                ss_slope = None
+                ss_intercept = None
+                ss_r2 = None
+                ss_rmse = None
+                ss_n_points = int(mask.sum())
+                ss_x_intercept = None
+
                 log_mask = sel_y > 0
                 if log_mask.sum() >= 2:
                     X_fit = sel_x[log_mask].reshape(-1, 1)
                     Y_fit = np.log10(sel_y[log_mask])
-                    slope, intercept, r2, rmse = perform_linear_regression(X_fit, Y_fit)
+                    ss_slope, ss_intercept, ss_r2, ss_rmse = perform_linear_regression(X_fit, Y_fit)
                     x_line = np.linspace(ss_min, ss_max, 100)
-                    y_line = slope * x_line + intercept
+                    y_line = ss_slope * x_line + ss_intercept
                     overlay = {"x": x_line, "y": y_line, "label": "SS fit", "color": "red"}
+                    # compute x-intercept where log10(ID) == 0 -> x = -intercept / slope
+                    try:
+                        if ss_slope != 0 and np.isfinite(ss_slope) and np.isfinite(ss_intercept):
+                            ss_x_intercept = float(-ss_intercept / ss_slope)
+                    except Exception:
+                        ss_x_intercept = None
+
                 render_scatter_with_editor(plot_df_plot, x_col, "log_id", plot_key="ss", default_title=default_title, default_yscale="linear", overlay_line=overlay)
 
                 st.write(
@@ -453,11 +518,12 @@ def main() -> None:
                         "parameter": "SS",
                         "fit_min": ss_min,
                         "fit_max": ss_max,
-                        "slope": None,
-                        "intercept": None,
-                        "r2": None,
-                        "rmse": None,
-                        "n_points": int(mask.sum()),
+                        "slope": ss_slope,
+                        "intercept": ss_intercept,
+                        "x_intercept": ss_x_intercept,
+                        "r2": ss_r2,
+                        "rmse": ss_rmse,
+                        "n_points": ss_n_points,
                     }
                     st.session_state.results_table = pd.concat(
                         [st.session_state.results_table, pd.DataFrame([new_row])],
@@ -484,6 +550,14 @@ def main() -> None:
                     gm_slope, gm_intercept, gm_r2, gm_rmse = perform_linear_regression(
                         sel_x.reshape(-1, 1), sel_y
                     )
+                    # compute x-intercept for linear fit (where ID == 0)
+                    gm_x_intercept = None
+                    try:
+                        if gm_slope != 0 and np.isfinite(gm_slope) and np.isfinite(gm_intercept):
+                            gm_x_intercept = float(-gm_intercept / gm_slope)
+                    except Exception:
+                        gm_x_intercept = None
+
                     st.write(
                         f"Computed gm (slope): {gm_slope:.3e} A/V\nR²: {gm_r2:.4f}, RMSE: {gm_rmse:.3e}, Points used: {len(sel_x)}"
                     )
@@ -533,6 +607,7 @@ def main() -> None:
                             "fit_max": gm_max,
                             "slope": gm_slope,
                             "intercept": gm_intercept,
+                            "x_intercept": gm_x_intercept,
                             "r2": gm_r2,
                             "rmse": gm_rmse,
                             "n_points": len(sel_x),
@@ -542,8 +617,6 @@ def main() -> None:
                             ignore_index=True,
                         )
                         st.success("gm result saved to results table.")
-                else:
-                    st.info("Not enough points for regression.")
             elif param_option == "On/off ratio":
                 # log plot for Ion/Ioff using Seaborn (set log y-axis)
                 default_title = "ID vs VGS (log scale) for Ion/Ioff extraction"
@@ -595,7 +668,7 @@ def main() -> None:
         st.subheader("📑 Results Table")
         st.caption("Saved parameter extraction results.")
         res_df = st.session_state.results_table
-        st.dataframe(res_df, use_container_width=True)
+        st.dataframe(style_dataframe_sci(res_df), use_container_width=True)
         c1, c2, c3 = st.columns(3)
         with c1:
             st.download_button(
