@@ -11,7 +11,7 @@ pip install -r requirements.txt
 ## Run App
 
 ```bash
-streamlit run src/fet_analyzer/Version4.py
+streamlit run src/fet_analyzer/app.py
 ```
 
 ## Contributing
