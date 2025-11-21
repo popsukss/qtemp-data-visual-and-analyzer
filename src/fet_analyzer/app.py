@@ -109,12 +109,11 @@ def plot_options_ui(plot_key: str, default_title: str, default_xlabel: str, defa
     with col1:
         if st.button("✏️ Edit plot", key=btn_key, use_container_width=True):
             st.session_state[f"edit_{plot_key}"] = not st.session_state[f"edit_{plot_key}"]
-    
+
+    # Reserve middle column for spacing / future controls
     with col2:
-        if st.session_state[f"edit_{plot_key}"]:
-            if st.button("✓ Done editing", key=f"done_{plot_key}", use_container_width=True):
-                st.session_state[f"edit_{plot_key}"] = False
-    
+        st.write("")
+
     with col3:
         if st.session_state[f"edit_{plot_key}"]:
             if st.button("↺ Reset defaults", key=f"reset_{plot_key}", use_container_width=True):
@@ -234,6 +233,25 @@ def plot_options_ui(plot_key: str, default_title: str, default_xlabel: str, defa
                     key=f"ms_{plot_key}",
                     help="Size of data point markers"
                 )
+
+            # Toggle to show/hide markers
+            show_markers = st.checkbox(
+                "Show markers",
+                value=False,
+                key=f"markers_{plot_key}",
+                help="Toggle display of point markers on top of the line"
+            )
+
+            # Line style selector (solid/dashed/dotted/dashdot)
+            line_style_choice = st.selectbox(
+                "Line style",
+                options=["solid", "dashed", "dotted", "dashdot"],
+                index=0,
+                key=f"ls_{plot_key}",
+                help="Visual style of the plotted line"
+            )
+            _ls_map = {"solid": "-", "dashed": "--", "dotted": ":", "dashdot": "-."}
+            line_style = _ls_map.get(line_style_choice, "-")
             
             st.divider()
             
@@ -322,7 +340,56 @@ def plot_options_ui(plot_key: str, default_title: str, default_xlabel: str, defa
                         key=f"legend_{plot_key}",
                         help="Display plot legend if available"
                     )
-                
+                # Legend placement and style
+                col_leg1, col_leg2 = st.columns(2)
+                with col_leg1:
+                    legend_loc = st.selectbox(
+                        "Legend location",
+                        options=[
+                            "best",
+                            "upper right",
+                            "upper left",
+                            "lower left",
+                            "lower right",
+                            "right",
+                            "center left",
+                            "center right",
+                            "lower center",
+                            "upper center",
+                            "center",
+                        ],
+                        index=0,
+                        key=f"legend_loc_{plot_key}",
+                        help="Location of the legend on the plot",
+                    )
+                with col_leg2:
+                    legend_outside = st.checkbox(
+                        "Place legend outside",
+                        value=False,
+                        key=f"legend_outside_{plot_key}",
+                        help="If checked, legend will be placed outside the axes to the right",
+                    )
+
+                col_leg3, col_leg4 = st.columns(2)
+                with col_leg3:
+                    legend_size = st.number_input(
+                        "Legend font size",
+                        min_value=6,
+                        max_value=24,
+                        value=10,
+                        step=1,
+                        key=f"legend_size_{plot_key}",
+                    )
+                with col_leg4:
+                    legend_ncol = st.slider(
+                        "Legend columns",
+                        min_value=1,
+                        max_value=4,
+                        value=1,
+                        step=1,
+                        key=f"legend_ncol_{plot_key}",
+                    )
+
                 dpi = st.number_input(
                     "Export DPI (dots per inch)",
                     min_value=72,
@@ -340,16 +407,22 @@ def plot_options_ui(plot_key: str, default_title: str, default_xlabel: str, defa
             "figsize": (w, h),
             "alpha": alpha,
             "linewidth": linewidth,
+                "line_style": line_style,
             "yscale": yscale,
             "xscale": xscale,
             "grid": show_grid,
             "grid_alpha": grid_alpha if show_grid else 0,
             "grid_style": grid_style if show_grid else "solid",
             "marker_size": marker_size,
+            "show_markers": show_markers,
             "title_size": title_size,
             "label_size": label_size,
             "tight_layout": tight_layout,
             "show_legend": show_legend,
+            "legend_loc": legend_loc,
+            "legend_outside": legend_outside,
+            "legend_size": legend_size,
+            "legend_ncol": legend_ncol,
             "dpi": dpi,
         }
     
@@ -361,28 +434,39 @@ def plot_options_ui(plot_key: str, default_title: str, default_xlabel: str, defa
         "figsize": default_figsize,
         "alpha": default_alpha,
         "linewidth": 2.0,
+        "line_style": "-",
         "yscale": default_yscale,
         "xscale": "linear",
         "grid": True,
         "grid_alpha": 0.4,
         "grid_style": "dashed",
         "marker_size": 6,
+        "show_markers": False,
         "title_size": 14,
         "label_size": 12,
         "tight_layout": True,
         "show_legend": True,
+        "legend_loc": "best",
+        "legend_outside": False,
+        "legend_size": 10,
+        "legend_ncol": 1,
         "dpi": 150,
     }
 
 def render_scatter_with_editor(df: pd.DataFrame, x_col: str, y_col: str, plot_key: str,
                                default_title: str, default_yscale: str = "linear",
-                               overlay_line: Optional[dict] = None):
+                               overlay_line: Optional[dict] = None,
+                               opts_override: Optional[dict] = None):
     """
     Render a Seaborn scatter with an Edit plot button. overlay_line optionally contains
     {'x': np.ndarray, 'y': np.ndarray, 'label': str, 'color': str}.
     Robust to non-positive y values when log y-scale is requested.
     """
-    opts = plot_options_ui(plot_key, default_title, x_col, y_col, default_figsize=(6.0,4.0), default_alpha=1, default_yscale=default_yscale)
+    # If caller provides options (from an external editor placed elsewhere), use them.
+    if opts_override is not None:
+        opts = opts_override
+    else:
+        opts = plot_options_ui(plot_key, default_title, x_col, y_col, default_figsize=(6.0,4.0), default_alpha=1, default_yscale=default_yscale)
 
     # If user requested log scale but there are non-positive y values, filter them out.
     plot_df = df.copy()
@@ -394,22 +478,70 @@ def render_scatter_with_editor(df: pd.DataFrame, x_col: str, y_col: str, plot_ke
         else:
             plot_df = plot_df.loc[pos_mask].copy()
 
-    fig, ax = plt.subplots(figsize=opts["figsize"])
-    # seaborn lineplot for continuity + scatter-like view (alpha controls visibility)
-    sns.lineplot(data=plot_df, x=x_col, y=y_col, alpha=opts["alpha"],
-                 linewidth=opts["linewidth"], ax=ax)
-    ax.set_title(opts["title"])
-    ax.set_xlabel(opts["xlabel"])
-    ax.set_ylabel(opts["ylabel"])
-    if opts["grid"]:
-        ax.grid(True, linestyle="--", alpha=0.4)
-    if opts["yscale"] == "log":
+    fig, ax = plt.subplots(figsize=opts["figsize"], dpi=opts.get("dpi", 150))
+
+    # Draw continuous line using matplotlib so we can control linestyle
+    ax.plot(
+        plot_df[x_col],
+        plot_df[y_col],
+        linestyle=opts.get("line_style", "-"),
+        linewidth=opts.get("linewidth", 2.0),
+        alpha=opts.get("alpha", 1.0),
+    )
+
+    # Overlay scatter markers to reflect marker size and transparency (optional)
+    if opts.get("show_markers", False):
+        ax.scatter(
+            plot_df[x_col],
+            plot_df[y_col],
+            s=(opts.get("marker_size", 6) ** 2),
+            alpha=opts.get("alpha", 1.0),
+            edgecolors="none",
+        )
+
+    # Titles and labels with font sizes from editor
+    ax.set_title(opts.get("title", ""), fontsize=opts.get("title_size", 14))
+    ax.set_xlabel(opts.get("xlabel", x_col), fontsize=opts.get("label_size", 12))
+    ax.set_ylabel(opts.get("ylabel", y_col), fontsize=opts.get("label_size", 12))
+    ax.tick_params(axis="both", labelsize=opts.get("label_size", 12))
+
+    # Grid styling
+    if opts.get("grid", True):
+        style_map = {"solid": "-", "dashed": "--", "dotted": ":"}
+        style = style_map.get(opts.get("grid_style", "dashed"), "--")
+        ax.grid(True, linestyle=style, alpha=opts.get("grid_alpha", 0.4))
+
+    # Axis scales
+    if opts.get("yscale", "linear") == "log":
         ax.set_yscale("log")
+    if opts.get("xscale", "linear") == "log":
+        ax.set_xscale("log")
+
+    # Overlay fit/line if provided
     if overlay_line is not None:
-        # Overlay line may contain values outside filtered set; plot anyway but avoid invalid log plotting issues
-        ax.plot(overlay_line["x"], overlay_line["y"], color=overlay_line.get("color", "red"),
-                linewidth=1, label=overlay_line.get("label", "fit"), linestyle="--")
-        ax.legend()
+        ax.plot(
+            overlay_line["x"],
+            overlay_line["y"],
+            color=overlay_line.get("color", "red"),
+            linewidth=1,
+            label=overlay_line.get("label", "fit"),
+            linestyle="--",
+        )
+
+    # Legend handling using editor options
+    if opts.get("show_legend", True):
+        loc = opts.get("legend_loc", "best")
+        fontsize = opts.get("legend_size", 10)
+        ncol = opts.get("legend_ncol", 1)
+        if opts.get("legend_outside", False):
+            # place outside to the right
+            ax.legend(bbox_to_anchor=(1.05, 1), loc=loc, fontsize=fontsize, ncol=ncol)
+        else:
+            ax.legend(loc=loc, fontsize=fontsize, ncol=ncol)
+
+    if opts.get("tight_layout", True):
+        plt.tight_layout()
+
     st.pyplot(fig)
     plt.close(fig)
 # --- end added helpers ---
@@ -564,14 +696,50 @@ def render_multifile_comparison() -> None:
         return
     
     file_names = list(st.session_state.file_storage.keys())
-    
-    # Select files to compare
-    selected_files = st.multiselect(
-        "Select files to compare:",
-        options=file_names,
-        default=file_names[:min(2, len(file_names))],
-        key="multifile_selector"
-    )
+
+    # Provide a checkbox table so users can pick files to compare (select-all available)
+    st.caption("Select files to compare — check the boxes for files to include")
+    select_all_key = "multifile_select_all"
+    select_all = st.checkbox("Select all files", value=(len(file_names) <= 2), key=select_all_key)
+    # synchronize individual checkboxes when Select all is toggled
+    prev_key = f"{select_all_key}_prev"
+    prev_val = st.session_state.get(prev_key, None)
+    # initialize previous value if not present
+    if prev_val is None:
+        st.session_state[prev_key] = select_all
+        prev_val = select_all
+    # if the Select all checkbox changed since last render, update per-file checkboxes
+    if select_all != prev_val:
+        for i, fname in enumerate(file_names):
+            cb_key = f"multifile_select_{i}"
+            st.session_state[cb_key] = select_all
+        st.session_state[prev_key] = select_all
+
+    # header row
+    c0, c1, c2 = st.columns([0.05, 0.6, 0.35])
+    with c1:
+        st.markdown("**File**")
+    with c2:
+        st.markdown("**Info**")
+
+    selected_files = []
+    for i, fname in enumerate(file_names):
+        cb_key = f"multifile_select_{i}"
+        # default checked when Select all enabled, otherwise preserve previous state if present
+        default = select_all if cb_key not in st.session_state else st.session_state.get(cb_key, False)
+        cb_col, name_col, info_col = st.columns([0.05, 0.6, 0.35])
+        with cb_col:
+            checked = st.checkbox("", value=default, key=cb_key)
+        with name_col:
+            st.write(fname)
+        with info_col:
+            fi = st.session_state.file_storage.get(fname, {})
+            ts = fi.get("timestamp", "")
+            rows = len(fi.get("data", pd.DataFrame())) if fi.get("data") is not None else 0
+            st.write(f"{ts} | Rows: {rows}")
+
+        if st.session_state.get(cb_key):
+            selected_files.append(fname)
     
     if not selected_files:
         st.warning("Select at least one file to plot.")
@@ -609,74 +777,105 @@ def render_multifile_comparison() -> None:
             index=0 if "draini" not in y_options else y_options.index("draini")
         )
     
-    # Plot options
-    with st.expander("Plot options"):
-        plot_title = st.text_input("Plot title:", value=f"Multi-File Comparison: {y_col} vs {x_col}")
-        plot_xlabel = st.text_input("X label:", value=x_col)
-        plot_ylabel = st.text_input("Y label:", value=y_col)
-        plot_width = st.number_input("Figure width (inches):", min_value=1.0, value=10.0)
-        plot_height = st.number_input("Figure height (inches):", min_value=1.0, value=6.0)
-        plot_yscale = st.selectbox("Y scale:", options=["linear", "log"], index=0)
-        use_markers = st.checkbox("Show markers", value=True)
-        show_grid = st.checkbox("Show grid", value=True)
-    
-    # Create comparison plot
-    fig, ax = plt.subplots(figsize=(plot_width, plot_height))
-    
-    # Generate distinct colors for each file
-    colors = sns.color_palette("husl", len(selected_files))
-    
-    for idx, fname in enumerate(selected_files):
-        df = data_dict[fname]
-        plot_df = df[[x_col, y_col]].dropna().copy()
-        
-        if plot_df.empty:
-            st.warning(f"⚠️ {fname}: No valid data points for {x_col} vs {y_col}")
-            continue
-        
-        # Handle log scale for y-axis
-        if plot_yscale == "log":
-            pos_mask = plot_df[y_col] > 0
-            if not pos_mask.any():
-                st.warning(f"⚠️ {fname}: No positive y values for log scale")
-                continue
-            plot_df = plot_df.loc[pos_mask].copy()
-        
-        # Plot line with markers or just line
-        if use_markers:
-            ax.plot(plot_df[x_col], plot_df[y_col], 
-                   marker="o", linewidth=2, markersize=6,
-                   label=fname, color=colors[idx], alpha=0.7)
-        else:
-            ax.plot(plot_df[x_col], plot_df[y_col], 
-                   linewidth=2, label=fname, color=colors[idx], alpha=0.7)
-    
-    ax.set_title(plot_title, fontsize=14, fontweight="bold")
-    ax.set_xlabel(plot_xlabel, fontsize=12)
-    ax.set_ylabel(plot_ylabel, fontsize=12)
-    
-    if plot_yscale == "log":
-        ax.set_yscale("log")
-    
-    if show_grid:
-        ax.grid(True, linestyle="--", alpha=0.4)
-    
-    ax.legend(bbox_to_anchor=(1.05, 1), loc="upper left", fontsize=10)
-    plt.tight_layout()
-    st.pyplot(fig)
-    plt.close(fig)
-    
-    # Export comparison plot
-    if st.button("📥 Download comparison plot as PNG"):
-        img_bytes = io.BytesIO()
-        fig.savefig(img_bytes, format="png", dpi=300, bbox_inches="tight")
-        img_bytes.seek(0)
-        st.download_button(
-            "Click to download",
-            data=img_bytes.getvalue(),
-            file_name=f"multifile_comparison_{time.strftime('%Y%m%d_%H%M%S')}.png",
-            mime="image/png"
+    # Show plot options on the left and the comparison plot on the right
+    default_title = f"Multi-File Comparison: {y_col} vs {x_col}"
+    opt_col, plot_col = st.columns([1, 1])
+    with opt_col:
+        mf_opts = plot_options_ui(
+            plot_key="multifile",
+            default_title=default_title,
+            default_xlabel=x_col,
+            default_ylabel=y_col,
+            default_figsize=(10.0, 6.0),
+            default_alpha=0.7,
+            default_yscale="linear",
         )
+        # Allow renaming legend entries for selected files
+        st.markdown("**🖊️ Legend names**")
+        legend_names = {}
+        for i, fname in enumerate(selected_files):
+            key = f"legend_name_multifile_{i}"
+            # preserve previous custom name if present
+            default_name = st.session_state.get(key, fname)
+            label = st.text_input(f"Label for: {fname}", value=default_name, key=key)
+            legend_names[fname] = label
+        # attach to options so plotting code can use the custom labels
+        mf_opts["legend_names"] = legend_names
+
+    with plot_col:
+        # Create comparison plot using options from editor
+        fig, ax = plt.subplots(figsize=mf_opts.get("figsize", (10.0, 6.0)), dpi=mf_opts.get("dpi", 150))
+        colors = sns.color_palette("husl", len(selected_files))
+
+        for idx, fname in enumerate(selected_files):
+            df = data_dict[fname]
+            plot_df = df[[x_col, y_col]].dropna().copy()
+            if plot_df.empty:
+                st.warning(f"⚠️ {fname}: No valid data points for {x_col} vs {y_col}")
+                continue
+
+            if mf_opts.get("yscale", "linear") == "log":
+                pos_mask = plot_df[y_col] > 0
+                if not pos_mask.any():
+                    st.warning(f"⚠️ {fname}: No positive y values for log scale")
+                    continue
+                plot_df = plot_df.loc[pos_mask].copy()
+
+            # use custom legend name when provided
+            legend_names = mf_opts.get("legend_names", {}) if isinstance(mf_opts, dict) else {}
+            label_name = legend_names.get(fname, fname)
+            plot_kwargs = {
+                "linewidth": mf_opts.get("linewidth", 2.0),
+                "label": label_name,
+                "color": colors[idx],
+                "alpha": mf_opts.get("alpha", 0.7),
+                "linestyle": mf_opts.get("line_style", "-"),
+            }
+            if mf_opts.get("show_markers", False):
+                ax.plot(plot_df[x_col], plot_df[y_col], marker="o", markersize=mf_opts.get("marker_size", 6), **plot_kwargs)
+            else:
+                ax.plot(plot_df[x_col], plot_df[y_col], **plot_kwargs)
+
+        ax.set_title(mf_opts.get("title", default_title), fontsize=mf_opts.get("title_size", 14), fontweight="bold")
+        ax.set_xlabel(mf_opts.get("xlabel", x_col), fontsize=mf_opts.get("label_size", 12))
+        ax.set_ylabel(mf_opts.get("ylabel", y_col), fontsize=mf_opts.get("label_size", 12))
+
+        if mf_opts.get("yscale", "linear") == "log":
+            ax.set_yscale("log")
+        if mf_opts.get("xscale", "linear") == "log":
+            ax.set_xscale("log")
+
+        if mf_opts.get("grid", True):
+            style = mf_opts.get("grid_style", "dashed")
+            style_map = {"solid": "-", "dashed": "--", "dotted": ":"}
+            ax.grid(True, linestyle=style_map.get(style, "--"), alpha=mf_opts.get("grid_alpha", 0.4))
+
+        if mf_opts.get("show_legend", True):
+            loc = mf_opts.get("legend_loc", "upper left")
+            fontsize = mf_opts.get("legend_size", 10)
+            ncol = mf_opts.get("legend_ncol", 1)
+            if mf_opts.get("legend_outside", True):
+                ax.legend(bbox_to_anchor=(1.05, 1), loc=loc, fontsize=fontsize, ncol=ncol)
+            else:
+                ax.legend(loc=loc, fontsize=fontsize, ncol=ncol)
+
+        if mf_opts.get("tight_layout", True):
+            plt.tight_layout()
+
+        st.pyplot(fig)
+        plt.close(fig)
+
+        # Export comparison plot
+        if st.button("📥 Download comparison plot as PNG"):
+            img_bytes = io.BytesIO()
+            fig.savefig(img_bytes, format="png", dpi=300, bbox_inches="tight")
+            img_bytes.seek(0)
+            st.download_button(
+                "Click to download",
+                data=img_bytes.getvalue(),
+                file_name=f"multifile_comparison_{time.strftime('%Y%m%d_%H%M%S')}.png",
+                mime="image/png"
+            )
 
 
 def main() -> None:
@@ -765,33 +964,31 @@ def main() -> None:
         )
         selected_df = fwd_df if sweep_option == "Forward" else rev_df
         
-        # Create left and right columns for layout
-        left, right = st.columns(2)
-        
-        with left:
-            with st.expander("Data Preview (interactive table)", expanded=True):
-                st.dataframe(style_dataframe_sci(selected_df), use_container_width=True)
+        # Data preview & axis selection
+        with st.expander("Data Preview (interactive table)", expanded=True):
+            st.dataframe(style_dataframe_sci(selected_df), use_container_width=True)
 
-            num_cols = numeric_columns(selected_df)
-            # require gateV and drainI to compute metrics; but allow other x/y for scatter
-            if len(num_cols) < 2:
-                st.warning("At least two numeric columns are required for plotting and regression.")
-                return
+        num_cols = numeric_columns(selected_df)
+        # require gateV and drainI to compute metrics; but allow other x/y for scatter
+        if len(num_cols) < 2:
+            st.warning("At least two numeric columns are required for plotting and regression.")
+            return
 
-        with right:
-            st.subheader(f"Sweep: {sweep_option}")
-            # Select X and Y axes.  Suggest gatev/draini if present.  Use case-insensitive search.
-            def find_index(options: List[str], target: str) -> int:
-                for i, opt in enumerate(options):
-                    if opt.lower() == target:
-                        return i
-                return 0
+        # Select axes in a compact row
+        sel_c1, sel_c2 = st.columns(2)
+        def find_index(options: List[str], target: str) -> int:
+            for i, opt in enumerate(options):
+                if opt.lower() == target:
+                    return i
+            return 0
 
+        with sel_c1:
             x_col = st.selectbox(
                 "X axis (choose gatev for metrics)",
                 options=num_cols,
                 index=find_index(num_cols, "gatev") if num_cols else 0,
             )
+        with sel_c2:
             y_options = [c for c in num_cols if c != x_col]
             y_col = st.selectbox(
                 "Y axis (choose draini for metrics)",
@@ -799,39 +996,80 @@ def main() -> None:
                 index=find_index(y_options, "draini") if y_options else 0,
             )
 
-            plot_df = selected_df[[x_col, y_col]].dropna().copy()
-            if plot_df.empty:
-                st.warning("No valid data points available after removing NaNs.")
-                return
+        plot_df = selected_df[[x_col, y_col]].dropna().copy()
+        if plot_df.empty:
+            st.warning("No valid data points available after removing NaNs.")
+            return
 
-            # base scatter plot using selected columns (Seaborn + Matplotlib)
-            default_title = f"Scatter: {y_col} vs {x_col}"
+        # Split the view: left = plot editor, right = main plot (half/half)
+        plot_opt_col, plot_display_col = st.columns([1, 1])
+        default_title = f"Scatter: {y_col} vs {x_col}"
+        with plot_opt_col:
+            base_opts = plot_options_ui(
+                plot_key="base",
+                default_title=default_title,
+                default_xlabel=x_col,
+                default_ylabel=y_col,
+                default_figsize=(6.0, 4.0),
+                default_alpha=1.0,
+                default_yscale="linear",
+            )
+
+        with plot_display_col:
+            st.subheader(f"Sweep: {sweep_option}")
             render_scatter_with_editor(
-                plot_df, x_col, y_col, plot_key="base",
+                plot_df,
+                x_col,
+                y_col,
+                plot_key="base",
                 default_title=default_title,
                 default_yscale="linear",
                 overlay_line=None,
+                opts_override=base_opts,
             )
 
-            # FET metrics if proper columns selected
-            metrics_available = (x_col.lower() == "gatev" and y_col.lower() == "draini")
-            if metrics_available:
-                st.markdown("### Parameter extraction")
-                param_option = st.selectbox(
-                    "Select parameter to extract:",
-                    options=["Subthreshold swing (SS)", "Transconductance (gm)", "On/off ratio"],
-                    index=0,
+        # Parameter extraction section placed below the plot (options left, plot right)
+        st.markdown("---")
+        metrics_available = (x_col.lower() == "gatev" and y_col.lower() == "draini")
+        st.subheader("Parameter extraction")
+        if metrics_available:
+            param_option = st.selectbox(
+                "Select parameter to extract:",
+                options=["Subthreshold swing (SS)", "Transconductance (gm)", "Regression"],
+                index=0,
+            )
+
+            param_opt_col, param_plot_col = st.columns([1, 1])
+            with param_opt_col:
+                # dedicated editor for parameter plots — keep separate keys so parameter plots can have different options
+                if param_option.startswith("Subthreshold"):
+                    pkey = "param_ss"
+                    default_yscale = "linear"
+                elif param_option.startswith("Transconductance"):
+                    pkey = "param_gm"
+                    default_yscale = "linear"
+                else:  # Regression
+                    pkey = "param_reg"
+                    default_yscale = "linear"
+                
+                param_opts = plot_options_ui(
+                    plot_key=pkey,
+                    default_title="Parameter plot",
+                    default_xlabel=x_col,
+                    default_ylabel=y_col,
+                    default_figsize=(6.0, 4.0),
+                    default_alpha=1.0,
+                    default_yscale=default_yscale,
                 )
+
+            with param_plot_col:
                 if param_option == "Subthreshold swing (SS)":
-                    # Prepare data and show log10(ID) vs VGS using Seaborn
                     plot_df_plot = plot_df.copy()
-                    # compute adaptive epsilon from positive values to avoid arbitrary fixed clip
                     pos_values = plot_df_plot[y_col][plot_df_plot[y_col] > 0]
                     eps = float(pos_values.min() / 10.0) if pos_values.size > 0 else 1e-30
                     if not np.isfinite(eps) or eps <= 0:
                         eps = 1e-30
                     plot_df_plot["log_id"] = np.log10(plot_df_plot[y_col].clip(lower=eps))
-                    # slider for gate voltage range
                     x_min_all = float(plot_df[x_col].min())
                     x_max_all = float(plot_df[x_col].max())
                     st.caption("Select gate‑voltage range for SS fit:")
@@ -848,16 +1086,7 @@ def main() -> None:
                     sel_y = plot_df.loc[mask, y_col].to_numpy()
                     ss_value = compute_subthreshold_swing(sel_x, sel_y)
 
-                    # plot scatter of log10(ID) and overlay linear fit in log-space if possible
-                    default_title = "log10(ID) vs VGS for SS extraction"
                     overlay = None
-                    ss_slope = None
-                    ss_intercept = None
-                    ss_r2 = None
-                    ss_rmse = None
-                    ss_n_points = int(mask.sum())
-                    ss_x_intercept = None
-
                     log_mask = sel_y > 0
                     if log_mask.sum() >= 2:
                         X_fit = sel_x[log_mask].reshape(-1, 1)
@@ -866,19 +1095,9 @@ def main() -> None:
                         x_line = np.linspace(ss_min, ss_max, 100)
                         y_line = ss_slope * x_line + ss_intercept
                         overlay = {"x": x_line, "y": y_line, "label": "SS fit", "color": "red"}
-                        # compute x-intercept where log10(ID) == 0 -> x = -intercept / slope
-                        try:
-                            if ss_slope != 0 and np.isfinite(ss_slope) and np.isfinite(ss_intercept):
-                                ss_x_intercept = float(-ss_intercept / ss_slope)
-                        except Exception:
-                            ss_x_intercept = None
 
-                    render_scatter_with_editor(plot_df_plot, x_col, "log_id", plot_key="ss", default_title=default_title, default_yscale="linear", overlay_line=overlay)
-
-                    st.write(
-                        f"Computed SS: {ss_value:.2f} mV/decade" if not np.isnan(ss_value) else "Cannot compute SS with selected range."
-                    )
-                    # option to save results
+                    render_scatter_with_editor(plot_df_plot, x_col, "log_id", plot_key="ss_param", default_title="log10(ID) vs VGS (SS)", default_yscale="linear", overlay_line=overlay, opts_override=param_opts)
+                    st.write(f"Computed SS: {ss_value:.2f} mV/decade" if not np.isnan(ss_value) else "Cannot compute SS with selected range.")
                     if st.button("Save SS result"):
                         new_row = {
                             "timestamp": time.strftime("%Y-%m-%d %H:%M:%S"),
@@ -887,20 +1106,17 @@ def main() -> None:
                             "parameter": "SS",
                             "fit_min": ss_min,
                             "fit_max": ss_max,
-                            "slope": ss_slope,
-                            "intercept": ss_intercept,
-                            "x_intercept": ss_x_intercept,
-                            "r2": ss_r2,
-                            "rmse": ss_rmse,
-                            "n_points": ss_n_points,
+                            "slope": (ss_slope if 'ss_slope' in locals() else None),
+                            "intercept": (ss_intercept if 'ss_intercept' in locals() else None),
+                            "x_intercept": (float(-ss_intercept / ss_slope) if 'ss_slope' in locals() and ss_slope and np.isfinite(ss_slope) and np.isfinite(ss_intercept) else None),
+                            "r2": (ss_r2 if 'ss_r2' in locals() else None),
+                            "rmse": (ss_rmse if 'ss_rmse' in locals() else None),
+                            "n_points": int(mask.sum()),
                         }
-                        st.session_state.results_table = pd.concat(
-                            [st.session_state.results_table, pd.DataFrame([new_row])],
-                            ignore_index=True,
-                        )
+                        st.session_state.results_table = pd.concat([st.session_state.results_table, pd.DataFrame([new_row])], ignore_index=True)
                         st.success("SS result saved to results table.")
+
                 elif param_option == "Transconductance (gm)":
-                    # linear plot for gm using selected columns (Seaborn)
                     x_min_all = float(plot_df[x_col].min())
                     x_max_all = float(plot_df[x_col].max())
                     st.caption("Select gate‑voltage range for gm fit:")
@@ -916,56 +1132,81 @@ def main() -> None:
                     sel_x = plot_df.loc[mask, x_col].to_numpy()
                     sel_y = plot_df.loc[mask, y_col].to_numpy()
                     if len(sel_x) >= 2:
-                        gm_slope, gm_intercept, gm_r2, gm_rmse = perform_linear_regression(
-                            sel_x.reshape(-1, 1), sel_y
-                        )
-                        # compute x-intercept for linear fit (where ID == 0)
-                        gm_x_intercept = None
-                        try:
-                            if gm_slope != 0 and np.isfinite(gm_slope) and np.isfinite(gm_intercept):
-                                gm_x_intercept = float(-gm_intercept / gm_slope)
-                        except Exception:
-                            gm_x_intercept = None
-
-                        st.write(
-                            f"Computed gm (slope): {gm_slope:.3e} A/V\nR²: {gm_r2:.4f}, RMSE: {gm_rmse:.3e}, Points used: {len(sel_x)}"
-                        )
-                        # plot scatter and overlay linear fit
-                        default_title = "ID vs VGS for gm extraction"
+                        gm_slope, gm_intercept, gm_r2, gm_rmse = perform_linear_regression(sel_x.reshape(-1, 1), sel_y)
                         x_line = np.linspace(gm_min, gm_max, 100)
                         y_line = gm_slope * x_line + gm_intercept
                         overlay = {"x": x_line, "y": y_line, "label": "gm fit", "color": "red"}
-                        render_scatter_with_editor(plot_df, x_col, y_col, plot_key="gm", default_title=default_title, default_yscale="linear", overlay_line=overlay)
-
-                        # mobility calculation
-                        st.markdown("#### Mobility calculation parameters")
-                        c1, c2 = st.columns(2)
-                        with c1:
-                            L_input = st.number_input(
-                                "Channel length L (μm)", min_value=0.0, value=1.0, step=0.1, format="%.3f"
+                        render_scatter_with_editor(plot_df, x_col, y_col, plot_key="gm_param", default_title="ID vs VGS (gm)", default_yscale="linear", overlay_line=overlay, opts_override=param_opts)
+                        st.write(f"Computed gm (slope): {gm_slope:.3e} A/V — R²: {gm_r2:.4f}")
+                        
+                        # Mobility calculation option
+                        with st.expander("Calculate field-effect mobility (μFE) from gm"):
+                            st.caption("Provide device parameters to calculate mobility: μFE = L·gm/(W·Cins·VDS)")
+                            mob_col1, mob_col2, mob_col3 = st.columns(3)
+                            
+                            with mob_col1:
+                                L_m = st.number_input(
+                                    "Channel length L (m):",
+                                    value=1.0e-6,
+                                    min_value=1e-9,
+                                    step=1e-7,
+                                    format="%.3e",
+                                    key="gm_L_input"
+                                )
+                            
+                            with mob_col2:
+                                W_m = st.number_input(
+                                    "Channel width W (m):",
+                                    value=1.0e-5,
+                                    min_value=1e-9,
+                                    step=1e-6,
+                                    format="%.3e",
+                                    key="gm_W_input"
+                                )
+                            
+                            with mob_col3:
+                                Cins_f = st.number_input(
+                                    "Insulator capacitance Cins (F/m²):",
+                                    value=1.15e-2,
+                                    min_value=1e-4,
+                                    step=1e-3,
+                                    format="%.3e",
+                                    key="gm_Cins_input"
+                                )
+                            
+                            VDS_v = st.number_input(
+                                "Drain-source voltage VDS (V):",
+                                value=0.05,
+                                min_value=1e-3,
+                                step=0.01,
+                                format="%.4f",
+                                key="gm_VDS_input"
                             )
-                            W_input = st.number_input(
-                                "Channel width W (μm)", min_value=0.0, value=1.0, step=0.1, format="%.3f"
-                            )
-                        with c2:
-                            Cins_input = st.number_input(
-                                "Insulator capacitance Cins (nF/cm²) \n for 285nm SiO2 is 121162 nF/m^2", min_value=0.0, value=121162.0, step=1.0, format="%.3f"
-                            )
-                            VDS_input = st.number_input(
-                                "VDS for gm (V)",
-                                min_value=0.0,
-                                value=float(np.nanmean(selected_df.get("drainv", pd.Series([1])))),
-                                step=0.1,
-                                format="%.3f",
-                            )
-                        # convert units
-                        L_m = L_input * 1e-6
-                        W_m = W_input * 1e-6
-                        Cins_F_m2 = Cins_input * 1e-5  # nF/cm² to F/m²
-                        mu = compute_mobility(gm_slope, L_m, W_m, Cins_F_m2, VDS_input)
-                        st.write(
-                            f"Estimated μFE: {mu:.3f} cm²/Vs" if not np.isnan(mu) else "Cannot compute mobility (check inputs)."
-                        )
+                            
+                            if st.button("Calculate mobility", key="calc_mobility_btn"):
+                                mu_fe = compute_mobility(gm_slope, L_m, W_m, Cins_f, VDS_v)
+                                if np.isfinite(mu_fe):
+                                    st.success(f"Field-effect mobility μFE = {mu_fe:.3f} cm²/Vs")
+                                    if st.button("Save mobility result", key="save_mobility_btn"):
+                                        new_row = {
+                                            "timestamp": time.strftime("%Y-%m-%d %H:%M:%S"),
+                                            "source_file": uploaded,
+                                            "sweep": sweep_option,
+                                            "parameter": "μFE (mobility)",
+                                            "fit_min": gm_min,
+                                            "fit_max": gm_max,
+                                            "slope": mu_fe,
+                                            "intercept": None,
+                                            "x_intercept": None,
+                                            "r2": None,
+                                            "rmse": None,
+                                            "n_points": len(sel_x),
+                                        }
+                                        st.session_state.results_table = pd.concat([st.session_state.results_table, pd.DataFrame([new_row])], ignore_index=True)
+                                        st.success("Mobility result saved to results table.")
+                                else:
+                                    st.error("Cannot calculate mobility. Check device parameters and ensure VDS ≠ 0.")
+                        
                         if st.button("Save gm result"):
                             new_row = {
                                 "timestamp": time.strftime("%Y-%m-%d %H:%M:%S"),
@@ -976,89 +1217,124 @@ def main() -> None:
                                 "fit_max": gm_max,
                                 "slope": gm_slope,
                                 "intercept": gm_intercept,
-                                "x_intercept": gm_x_intercept,
+                                "x_intercept": (float(-gm_intercept / gm_slope) if gm_slope and np.isfinite(gm_slope) and np.isfinite(gm_intercept) else None),
                                 "r2": gm_r2,
                                 "rmse": gm_rmse,
                                 "n_points": len(sel_x),
                             }
-                            st.session_state.results_table = pd.concat(
-                                [st.session_state.results_table, pd.DataFrame([new_row])],
-                                ignore_index=True,
-                            )
+                            st.session_state.results_table = pd.concat([st.session_state.results_table, pd.DataFrame([new_row])], ignore_index=True)
                             st.success("gm result saved to results table.")
-                elif param_option == "On/off ratio":
-                    # log plot for Ion/Ioff using Seaborn (set log y-axis)
-                    default_title = "ID vs VGS (log scale) for Ion/Ioff extraction"
-                    render_scatter_with_editor(plot_df, x_col, y_col, plot_key="io", default_title=default_title, default_yscale="log", overlay_line=None)
 
-                    # threshold input for current splitting
-                    y_min, y_max = float(plot_df[y_col].min()), float(plot_df[y_col].max())
-                    st.caption("Define current threshold separating on/off states:")
-                    thresh = st.slider(
-                        "Current threshold (A)",
-                        min_value=y_min,
-                        max_value=y_max,
-                        value=(y_min + y_max) / 2.0,
-                        step=(y_max - y_min) / 100 if y_max > y_min else 1.0,
-                        format="%.3e",
+                else:  # Regression
+                    x_min_all = float(plot_df[x_col].min())
+                    x_max_all = float(plot_df[x_col].max())
+                    st.caption("Select data range for regression:")
+                    reg_min, reg_max = st.slider(
+                        "Data range",
+                        min_value=x_min_all,
+                        max_value=x_max_all,
+                        value=(x_min_all, x_max_all),
+                        step=(x_max_all - x_min_all) / 100 if x_max_all > x_min_all else 1.0,
+                        format="%.4f",
+                        key="reg_range_slider"
                     )
-                    ion, ioff, ratio = compute_ion_ioff(plot_df[y_col].to_numpy(), thresh)
-                    st.write(
-                        f"Ion: {ion:.3e} A, Ioff: {ioff:.3e} A, Ion/Ioff: {ratio:.3e}" if not np.isnan(ratio) else "Cannot compute Ion/Ioff (check threshold)."
+                    
+                    # Regression type selection
+                    reg_type = st.radio(
+                        "Regression type:",
+                        options=["Normal linear (y vs x)", "Logarithmic (log(y) vs x)"],
+                        index=0,
+                        horizontal=True,
+                        key="reg_type_radio"
                     )
-                    if st.button("Save Ion/Ioff result"):
-                        new_row = {
-                            "timestamp": time.strftime("%Y-%m-%d %H:%M:%S"),
-                            "source_file": uploaded,
-                            "sweep": sweep_option,
-                            "parameter": "Ion/Ioff",
-                            "fit_min": None,
-                            "fit_max": None,
-                            "slope": None,
-                            "intercept": None,
-                            "r2": None,
-                            "rmse": None,
-                            "n_points": len(plot_df),
-                        }
-                        st.session_state.results_table = pd.concat(
-                            [st.session_state.results_table, pd.DataFrame([new_row])],
-                            ignore_index=True,
-                        )
-                        st.success("Ion/Ioff result saved to results table.")
+                    
+                    mask = (plot_df[x_col] >= reg_min) & (plot_df[x_col] <= reg_max)
+                    sel_x = plot_df.loc[mask, x_col].to_numpy()
+                    sel_y = plot_df.loc[mask, y_col].to_numpy()
+                    if len(sel_x) >= 2:
+                        if reg_type == "Normal linear (y vs x)":
+                            # Normal linear regression
+                            reg_slope, reg_intercept, reg_r2, reg_rmse = perform_linear_regression(sel_x.reshape(-1, 1), sel_y)
+                            x_line = np.linspace(reg_min, reg_max, 100)
+                            y_line = reg_slope * x_line + reg_intercept
+                            overlay = {"x": x_line, "y": y_line, "label": "Linear fit", "color": "red"}
+                            render_scatter_with_editor(plot_df, x_col, y_col, plot_key="reg_param", default_title=f"{y_col} vs {x_col} (Linear)", default_yscale="linear", overlay_line=overlay, opts_override=param_opts)
+                            st.write(f"Linear fit: slope = {reg_slope:.3e}, intercept = {reg_intercept:.3e}, R² = {reg_r2:.4f}")
+                            reg_label = "Linear"
+                        else:
+                            # Logarithmic regression: log(y) vs x
+                            log_mask = sel_y > 0
+                            if log_mask.sum() >= 2:
+                                X_fit = sel_x[log_mask].reshape(-1, 1)
+                                Y_fit = np.log10(sel_y[log_mask])
+                                reg_slope, reg_intercept, reg_r2, reg_rmse = perform_linear_regression(X_fit, Y_fit)
+                                x_line = np.linspace(reg_min, reg_max, 100)
+                                y_line = reg_slope * x_line + reg_intercept
+                                overlay = {"x": x_line, "y": y_line, "label": "Log fit", "color": "red"}
+                                
+                                # Create plot_df_plot with log_y for visualization
+                                plot_df_plot = plot_df.copy()
+                                pos_values = plot_df_plot[y_col][plot_df_plot[y_col] > 0]
+                                eps = float(pos_values.min() / 10.0) if pos_values.size > 0 else 1e-30
+                                if not np.isfinite(eps) or eps <= 0:
+                                    eps = 1e-30
+                                plot_df_plot["log_y"] = np.log10(plot_df_plot[y_col].clip(lower=eps))
+                                
+                                render_scatter_with_editor(plot_df_plot, x_col, "log_y", plot_key="reg_param", default_title=f"log10({y_col}) vs {x_col} (Log)", default_yscale="linear", overlay_line=overlay, opts_override=param_opts)
+                                st.write(f"Log fit: slope = {reg_slope:.3e}, intercept = {reg_intercept:.3e}, R² = {reg_r2:.4f}")
+                                reg_label = "Logarithmic"
+                            else:
+                                st.warning("Cannot perform logarithmic regression: insufficient positive y values.")
+                                reg_slope = reg_intercept = reg_r2 = reg_rmse = None
+                                reg_label = "Logarithmic (failed)"
+                        
+                        if reg_slope is not None and st.button("Save regression result", key="save_reg_result"):
+                            new_row = {
+                                "timestamp": time.strftime("%Y-%m-%d %H:%M:%S"),
+                                "source_file": uploaded,
+                                "sweep": sweep_option,
+                                "parameter": f"Regression ({reg_label})",
+                                "fit_min": reg_min,
+                                "fit_max": reg_max,
+                                "slope": reg_slope,
+                                "intercept": reg_intercept,
+                                "x_intercept": (float(-reg_intercept / reg_slope) if reg_slope and np.isfinite(reg_slope) and np.isfinite(reg_intercept) else None),
+                                "r2": reg_r2,
+                                "rmse": reg_rmse,
+                                "n_points": len(sel_x) if reg_type == "Normal linear (y vs x)" else log_mask.sum(),
+                            }
+                            st.session_state.results_table = pd.concat([st.session_state.results_table, pd.DataFrame([new_row])], ignore_index=True)
+                            st.success(f"Regression ({reg_label}) result saved to results table.")
+        else:
+            st.info("FET metrics extraction requires selecting gateV for the X axis and drainI for the Y axis.")
 
-                else:
-                    st.info(
-                        "FET metrics extraction requires selecting gateV for the X axis and drainI for the Y axis."
-                    )
-
-        with left:
-            # results table and downloads
-            st.markdown("---")
-            st.subheader("📑 Results Table")
-            st.caption("Saved parameter extraction results.")
-            res_df = st.session_state.results_table
-            st.dataframe(style_dataframe_sci(res_df), use_container_width=True)
-            c1, c2, c3 = st.columns(3)
-            with c1:
-                st.download_button(
-                    "Download CSV",
-                    data=dataframe_to_bytes(res_df, "csv"),
-                    file_name="fet_parameter_results.csv",
-                    mime="text/csv",
-                    disabled=res_df.empty,
-                )
-            with c2:
-                st.download_button(
-                    "Download Excel",
-                    data=dataframe_to_bytes(res_df, "xlsx"),
-                    file_name="fet_parameter_results.xlsx",
-                    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-                    disabled=res_df.empty,
-                )
-            with c3:
-                if st.button("Clear results table"):
-                    st.session_state.results_table = create_results_table()
-                    st.success("Results table cleared.")
+        # Results table (full width below analysis)
+        st.markdown("---")
+        st.subheader("📑 Results Table")
+        st.caption("Saved parameter extraction results.")
+        res_df = st.session_state.results_table
+        st.dataframe(style_dataframe_sci(res_df), use_container_width=True)
+        c1, c2, c3 = st.columns(3)
+        with c1:
+            st.download_button(
+                "Download CSV",
+                data=dataframe_to_bytes(res_df, "csv"),
+                file_name="fet_parameter_results.csv",
+                mime="text/csv",
+                disabled=res_df.empty,
+            )
+        with c2:
+            st.download_button(
+                "Download Excel",
+                data=dataframe_to_bytes(res_df, "xlsx"),
+                file_name="fet_parameter_results.xlsx",
+                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                disabled=res_df.empty,
+            )
+        with c3:
+            if st.button("Clear results table"):
+                st.session_state.results_table = create_results_table()
+                st.success("Results table cleared.")
     
     with tab2:
         # Multi-file comparison section
