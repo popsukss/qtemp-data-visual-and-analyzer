@@ -21,7 +21,7 @@ pip install -r requirements.txt
 ## Usage
 
 ```bash
-streamlit run src/fet_analyzer/Version4.py
+streamlit run src/fet_analyzer/app.py
 ```
 
 ## License
