@@ -8,7 +8,6 @@ A Streamlit-based dual-sweep FET analyzer for extracting key device metrics.
 - Subthreshold Swing (SS) Extraction
 - Transconductance (gm) Extraction
 - Mobility Calculation
-- Ion/Ioff Ratio Analysis
 - Interactive Plotting
 - Results Export (CSV/Excel)
 
