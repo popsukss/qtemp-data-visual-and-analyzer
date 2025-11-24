@@ -24,6 +24,3 @@ pip install -r requirements.txt
 streamlit run src/fet_analyzer/app.py
 ```
 
-## License
-
-MIT License
